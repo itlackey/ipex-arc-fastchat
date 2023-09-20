@@ -141,5 +141,5 @@ VOLUME [ "/apps" ]
 VOLUME [ "/root/.cache/huggingface" ]
 WORKDIR /apps/fastchat/logs
 
-ENTRYPOINT [ "/bin/start_fastchat.sh", "lmsys/vicuna-7b-v1.3" ]
-CMD [ "--insecure" ]
+ENTRYPOINT [ "/bin/start_fastchat.sh" ]
+CMD [ "lmsys/vicuna-7b-v1.3"]
