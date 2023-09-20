@@ -107,14 +107,6 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf  /var/lib/apt/lists/*
 
-
-COPY startup.sh /bin/start_fastchat.sh
-RUN chmod 755 /bin/start_fastchat.sh
-
-VOLUME [ "/deps" ]
-VOLUME [ "/apps" ]
-VOLUME [ "/root/.cache/huggingface" ]
-
 ENV venv_dir=/deps/venv
 ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
 
@@ -122,8 +114,6 @@ ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
 # See https://github.com/intel/compute-runtime/issues/586
 ENV NEOReadDebugKeys=1
 ENV ClDeviceGlobalMemSizeAvailablePercent=100
-
-WORKDIR /apps
 
 # llama.cpp dependencies
 RUN apt-get update && \
@@ -142,6 +132,14 @@ RUN CMAKE_ARGS="-DLLAMA_CLBLAST=on" FORCE_CMAKE=1 pip install llama-cpp-python  
 # Install fschat
 RUN pip3 install "fschat[model_worker,webui]"
 
-ENTRYPOINT [ "/bin/start_fastchat.sh" ]
+
+COPY startup.sh /bin/start_fastchat.sh
+RUN chmod 755 /bin/start_fastchat.sh
+
+VOLUME [ "/deps" ]
+VOLUME [ "/apps" ]
+VOLUME [ "/root/.cache/huggingface" ]
+WORKDIR /apps/fastchat/logs
+
+ENTRYPOINT [ "/bin/start_fastchat.sh", "lmsys/vicuna-7b-v1.3" ]
 CMD [ "--insecure" ]
-#ENTRYPOINT [ "python3 -m fastchat.serve.controller --host 0.0.0.0" ]
