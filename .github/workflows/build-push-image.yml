@@ -17,10 +17,7 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-      - name: Get Hash
-        id: hash
-        run: echo "git_hash=$(git rev-parse --short "$GITHUB_SHA")" >> $GITHUB_HASH
-        
+
       - name: Build and push
         uses: docker/build-push-action@v4
         with:
@@ -28,5 +25,5 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: |
-            ${{ secrets.DOCKER_USERNAME }}/ipex-arc-fastchat:${{ env.hash }}
+            ${{ secrets.DOCKER_USERNAME }}/ipex-arc-fastchat:${{ github.event.release.tag_name }}
             ${{ secrets.DOCKER_USERNAME }}/ipex-arc-fastchat:latest
