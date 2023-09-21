@@ -120,6 +120,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends --fix-missing \
     build-essential \
     git-lfs \
+    curl \
     opencl-headers \
     clblast-utils
 
@@ -141,5 +142,11 @@ VOLUME [ "/apps" ]
 VOLUME [ "/root/.cache/huggingface" ]
 WORKDIR /apps/fastchat/logs
 
-ENTRYPOINT [ "/bin/start_fastchat.sh" ]
-CMD [ "lmsys/vicuna-7b-v1.3"]
+EXPOSE 7860
+EXPOSE 8000
+ENV FS_ENABLE_WEB=true
+ENV FS_ENABLE_OPENAI_API=true
+ENV FS_ENABLE_HF_API=false
+
+ENTRYPOINT [ "/bin/bash", "/bin/start_fastchat.sh" ]
+CMD ["--model-path lmsys/vicuna-7b-v1.3 --max-gpu-memory 14Gib"]
