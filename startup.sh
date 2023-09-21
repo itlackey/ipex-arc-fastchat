@@ -1,29 +1,47 @@
+
 #!/bin/bash
 
-# Get the model name
-MODEL_NAME=$1
+# Find the value for --model-path using sed
+model_path=$(echo "$@" | awk -F'--model-path ' '{print $2}' | awk '{print $1}')
+
+# Extract the model name after the "/" character
+short_model_name=${model_path#*/}
+
+# Print args
+echo "Model path: $model_path"
+echo "Model name: $short_model_name"
+echo "Worker args: $@"
+echo "Enable web: $FS_ENABLE_WEB"
+echo "Enable OpenAI API: $FS_ENABLE_OPENAI_API"
 
 # Start the controller
 python3 -m fastchat.serve.controller --host 0.0.0.0 &
-sleep 2
 
 # Start the model worker
-python3 -m fastchat.serve.model_worker --model-path $MODEL_NAME --device xpu --host 0.0.0.0 --max-gpu-memory '14Gib' &
-sleep 5
+python3 -m fastchat.serve.model_worker --device xpu --host 0.0.0.0 $@ &
+
 # Health check for controller using a test message
 while true; do
-    if python3 -m fastchat.serve.test_message --model-name $MODEL_NAME; then
-        break
-    fi
-    sleep 5  # wait for 5 seconds before the next attempt
+  response=$(python3 -m fastchat.serve.test_message --model-name $short_model_name)
+  if echo "$response" | grep -q "worker_addr: http://localhost:21002"; then
+    echo "Model registered spinning up services..."
+    break
+  else
+    echo "Waiting for model..."
+  fi
+  sleep 3  # wait before the next attempt
 done
 
-# Start the web server
-# Replace this with the actual command to start your web server
-python3 -m fastchat.serve.gradio_web_server --host 0.0.0.0 --model-list-mode 'reload' &
 
-# Start the OpenAI API
-python3 -m fastchat.serve.openai_api_server --host 0.0.0.0 --port 8000
+# Check to see if the web server should be enabled
+if [[ "${FS_ENABLE_WEB}" == "true" ]]; then
+  # Start the web server
+  echo "Enabling web server..."
+  python3 -m fastchat.serve.gradio_web_server --host 0.0.0.0 --model-list-mode 'reload' &
+fi
 
-
-
+if [[ "${FS_ENABLE_OPENAI_API}" == "true" ]]; then
+    # Start the OpenAI API
+    echo "Enabling OpenAI API server..."
+    python3 -m fastchat.serve.openai_api_server --host 0.0.0.0 --port 8000
+fi
