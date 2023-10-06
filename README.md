@@ -8,8 +8,8 @@ Spinning up the web server is as simple as using the `docker run` command but it
 
 - `--device /dev/dri`: is needed to enable access to the GPU hardware
 - `-p 7860:7860`: Expose the port for the web UI
-- `-p 7860:7860`: Expose the port for the OpenAI API
-- `-v ~/local/path:/remote/path`: Multiple can be mounted to a specifed folder.
+- `-p 8000:8000`: Expose the port for the OpenAI API
+- `-v ~/local/path:/remote/path`: Multiple can be mounted to a specified folder.
     - **Recommended** `-v ~/ai/huggingface:/root/.cache/huggingface`: Mount a volume to a local folder that contains the models downloaded from hugging face. *It is highly recommended to set this volume to a local folder you want to store the large models.* This also prevents the need to re-download the model for different containers and between restarts.
     -  **Optional** `-v ~/ai/apps:/apps`: Provided to map to a local folder to store applications and fast chat logging. By default the container will write logs to the `/apps/fastchat/logs` folder. We recommend mapping this to a local folder that is easy to access. This will help in troubleshooting issues with the FastChat services.
     - **Optional** `-v ~/ai/deps:/deps`:  The container will store the python venv folder in `/deps/venv`. Specify a local path if you would like to access the files contained in the containers venv folder.
