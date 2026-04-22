@@ -1,94 +1,155 @@
-# FastChat Docker for Intel Arc GPUs
- 
-This project provides a Docker container that can be used to host a [FastChat](https://github.com/lm-sys/FastChat) web server and OpenAI API. This project is based heavily on the work done by [Nuullll](https://github.com/Nuullll) and their [ipex-sd-docker-for-arc-gpu](https://github.com/Nuullll/ipex-sd-docker-for-arc-gpu) project. Thank you to them for doing the heavy lifting of getting the Arc GPU working in a docker container.
+# vLLM Docker for Intel Arc GPUs (A-series & B-series)
 
-## Running the container
+An OpenAI-compatible LLM inference server for Intel Arc GPUs, powered by [vLLM](https://github.com/vllm-project/vllm) with the native Intel XPU backend. Supports both the A-series (A770, A750) and the B-series (B580, Arc Pro B60/B70).
 
-Spinning up the web server is as simple as using the `docker run` command but it requires a few cli arguments to be specified. 
+> **Upcoming rename (next release):** This image will be republished as `itlackey/vllm-arc` to reflect the move away from FastChat and IPEX-LLM. The `itlackey/ipex-arc-fastchat` tag will continue to be published for one additional release and then stop receiving updates. Pin to a specific version tag if you need stability across the rename.
 
-- `--device /dev/dri`: is needed to enable access to the GPU hardware
-- `-p 7860:7860`: Expose the port for the web UI
-- `-p 8000:8000`: Expose the port for the OpenAI API
-- `-v ~/local/path:/remote/path`: Multiple can be mounted to a specified folder.
-    - **Recommended** `-v ~/ai/huggingface:/root/.cache/huggingface`: Mount a volume to a local folder that contains the models downloaded from hugging face. *It is highly recommended to set this volume to a local folder you want to store the large models.* This also prevents the need to re-download the model for different containers and between restarts.
-    -  **Optional** `-v ~/ai/fastchat/logs:/logs`: Provided to map to a local folder to store fast chat logs. By default the container will write logs to the `/logs` folder. We recommend mapping this to a local folder that is easy to access. This will help in troubleshooting issues with the FastChat services.   
-- `itlackey/ipex-arc-fastchat:latest`: The latest published version of the docker image 
+## What changed in this release
+
+- **Serving framework:** FastChat → vLLM (PagedAttention, continuous batching, INT4/FP8 quantization)
+- **GPU stack:** PyTorch 2.0.1a0 + IPEX 2.0.110 (2023, EOL) → PyTorch 2.8 + native XPU device
+- **Base image:** Custom Ubuntu + oneAPI build → `intel/intel-extension-for-pytorch:2.8.10-xpu`
+- **GPU series:** A-series only → A-series **and** B-series
+- **Processes per container:** 4 (FastChat controller + worker + gradio + openai) → 1 (vLLM)
+- **Quantization:** none → INT4 / INT8 / FP8 / AWQ / GPTQ via vLLM flags
+- **Gradio web UI:** removed. Pair with [Open WebUI](https://github.com/open-webui/open-webui) for a browser interface.
+
+## Requirements
+
+- Intel Arc GPU (A-series or B-series) with a current Linux kernel (6.2+) and the Intel GPU userspace drivers installed on the host
+- Docker with access to `/dev/dri`
+- The host user (or the container runtime) must be in the `video` and `render` groups
+
+## Quick start with Docker Compose
 
 ```sh
-## Run in the background with default FastChat worker settings 
-docker run -d \
-    --device /dev/dri \
-    -v ~/ai/models/huggingface:/root/.cache/huggingface \
-    -p 7860:7860 \
-    -p 8000:8000 \
-    itlackey/ipex-arc-fastchat:latest
+docker compose up -d
 ```
 
-This will start a container on port 7860, and you can access the FastChat web server by visiting http://localhost:7860 in your web browser. To access the OpenAI API, you can use the http://localhost:8000/v1 url and whatever client you need.
-
-**Please note** that the default settings for the container are to run the `lmsys/vicuna-7b-v1.3` with 14Gib of VRAM allocated. You can change these settings by providing CLI arguments to the FastChat worker.
-
-### Worker configuration
-
-Additional parameters can be provided after the docker image name that will be passed to the call to `fastchat.serve.model_worker`. This allows you to specify the model to load when starting the container. It also allows you to customize the settings for the FastChat worker. 
-
-Here is an example of running CodeLlama-7b-Instruct-hf model on a single A770 with 14Gib.
+This loads `Qwen/Qwen2.5-7B-Instruct` in bfloat16 with an 8K context on port 8000. Override the model by editing `docker-compose.yaml` or by running:
 
 ```sh
-## Run in the background
+MODEL=meta-llama/Llama-3.1-8B-Instruct docker compose run --rm --service-ports vllm \
+    --model $MODEL --dtype bfloat16 --max-model-len 8192
+```
+
+Gated models (e.g. Llama-3) need a HuggingFace token:
+
+```sh
+HF_TOKEN=hf_xxx docker compose up -d
+```
+
+## Quick start with `docker run`
+
+```sh
 docker run -d \
     --device /dev/dri \
-    -v ~/ai/models/huggingface:/root/.cache/huggingface \
-    -v ~/ai/fastchat/logs:/logs \
+    --group-add video \
+    --group-add render \
+    --ipc=host \
+    --shm-size=16g \
+    -v ~/.cache/huggingface:/root/.cache/huggingface \
     -p 8000:8000 \
     itlackey/ipex-arc-fastchat:latest \
-    --model-path codellama/CodeLlama-7b-Instruct-hf --max-gpu-memory 14Gib
+    --model Qwen/Qwen2.5-7B-Instruct --dtype bfloat16
 ```
-There are several arguments that can be passed to the model worker. Check the FastChat [documentation](https://github.com/lm-sys/FastChat#single-gpu) or run `python3 -m fastchat.serve.model_worker --help` on the container to see a list of options.
 
-The most notable options are to adjust the max gpu memory (for A750 `--max-gpu-memory 7Gib`) and the number of GPUs (for multiple GPUs `--num-gpus 2`). Check the FastChat documentation to find more detailed information. 
+`--ipc=host` and `--shm-size=16g` are required by vLLM's PagedAttention shared-memory mechanism. `--group-add video --group-add render` is required on most Linux distributions for the container to use `/dev/dri/renderD128`.
 
-## Using the model
+## Using the API
 
-There are several ways to utilize the model that is now running in the docker container. Below is a list of ways to interact with the model once the container is up and running.
-
-### Using the web browser
-
-Once the container is up and running, you should be able to navigate to http://localhost:7860 in your browser and see a basic chat interface. Here you can have a conversation with the model, ask it to generate code, answer questions, etc. This works similar to ChatGPT and other online LLM chat services.
-
-### Using the continue VSCode extension
-
-To use the container as a coding assistant like GitHub Co-Pilot, you can install the [continue extension](https://marketplace.visualstudio.com/items?itemName=Continue.continue) for VS Code. Once the extension is installed, you will need to update your configuration to point to the container instead of the OpenAI API endpoint.  More information can be found in [continue's docs](https://continue.dev/docs/walkthroughs/codellama#fastchat-api), but here is a quick overview.
-
-Open your `~/.continue/config.py` file and make these changes.
-
-Include this line of code at the top of the file.
+vLLM exposes an OpenAI-compatible API at `http://localhost:8000/v1`. It works with any OpenAI client unchanged — just point `base_url` at the container and use `EMPTY` (or anything) as the API key.
 
 ```python
-from continuedev.src.continuedev.libs.llm.openai import OpenAI
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="EMPTY")
+
+resp = client.chat.completions.create(
+    model="Qwen/Qwen2.5-7B-Instruct",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(resp.choices[0].message.content)
 ```
 
-Then switch the models parameter to specify the model you are running and the FastChat API endpoint. 
+Other useful endpoints:
+- `GET /v1/models` — list the loaded model
+- `POST /v1/completions` — legacy completions
+- `POST /v1/embeddings` — if the loaded model supports embeddings
+- `GET /metrics` — Prometheus metrics (tokens/sec, queue depth, KV cache usage, etc.)
 
-```python
+## GPU memory sizing
 
-    models=Models(default=OpenAI(
-        model="CodeLlama-7b-Instruct-hf",
-        api_base='http://localhost:8000/v1',
-        api_key="EMPTY")),
+| GPU | VRAM | Recommended model sizes |
+|---|---|---|
+| Arc A750 | 8 GB | 7B with `--quantization awq_marlin` (INT4) |
+| Arc A770 | 16 GB | 7B bf16, or 13B INT4 |
+| Arc B580 | 12 GB | 7B bf16 (shorter context), 13B INT4 |
+| Arc Pro B60 | 24 GB | 13B bf16, 32B INT4 |
+| Arc Pro B70 | 32 GB | 32B bf16, 70B INT4 |
 
+Key vLLM flags for tuning:
+- `--gpu-memory-utilization 0.9` — fraction of VRAM vLLM may use (default 0.9)
+- `--max-model-len N` — maximum context length; reduce to fit larger batch sizes
+- `--quantization awq_marlin` (or `gptq_marlin`, `fp8`) — load quantized weights
+- `--tensor-parallel-size N` — shard across multiple GPUs
+- `--dtype bfloat16` (preferred) or `float16`
+
+Run `python3 -m vllm.entrypoints.openai.api_server --help` inside the container for the full flag list.
+
+## Multi-GPU
+
+To shard across two Arc GPUs:
+
+```sh
+docker run -d \
+    --device /dev/dri \
+    --group-add video --group-add render \
+    --ipc=host --shm-size=16g \
+    -v ~/.cache/huggingface:/root/.cache/huggingface \
+    -p 8000:8000 \
+    itlackey/ipex-arc-fastchat:latest \
+    --model Qwen/Qwen2.5-32B-Instruct \
+    --dtype bfloat16 \
+    --tensor-parallel-size 2
 ```
-**NOTE:** The model should be set to whatever you specified when starting the container. This example assumes the container was started with the `--model-path codellama/CodeLlama-7b-Instruct-hf` argument specified. If you started the container with the default settings, the model should be set to `vicuna-7b-v1.3`.
 
+## Adding a web UI
 
+The container no longer ships a Gradio UI. The recommended pairing is [Open WebUI](https://github.com/open-webui/open-webui):
+
+```yaml
+# add to docker-compose.yaml
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    ports:
+      - "3000:8080"
+    environment:
+      - OPENAI_API_BASE_URL=http://vllm:8000/v1
+      - OPENAI_API_KEY=EMPTY
+    depends_on:
+      - vllm
+```
+
+## Using with editor integrations
+
+Any tool that accepts an OpenAI-compatible endpoint will work. Point it at `http://localhost:8000/v1` with any placeholder API key. Examples: Continue.dev, Cursor (custom endpoint), Zed, aider.
 
 ## Development
 
-To get started, you will need to clone this repository.
+Build locally:
 
-You can build your modified image by using the following command:
+```sh
+docker compose build
+# or
+docker build -t itlackey/ipex-arc-fastchat:dev .
+```
 
-`docker build -f Dockerfile -t [your-username]/ipex-arc-fastchat:latest .`
+Override the pinned vLLM version at build time:
 
+```sh
+docker build --build-arg VLLM_VERSION=0.14.0 -t itlackey/ipex-arc-fastchat:dev .
+```
 
+## Acknowledgments
 
+This project originally built on work by [Nuullll](https://github.com/Nuullll) and their [ipex-sd-docker-for-arc-gpu](https://github.com/Nuullll/ipex-sd-docker-for-arc-gpu) project for getting Arc GPUs working inside a container. The current release replaces the FastChat + IPEX-LLM stack (both archived by Intel in early 2026) with vLLM on top of native PyTorch XPU.

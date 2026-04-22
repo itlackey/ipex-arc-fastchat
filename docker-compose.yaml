@@ -1,0 +1,27 @@
+services:
+  vllm:
+    image: itlackey/ipex-arc-fastchat:latest
+    build:
+      context: .
+    container_name: vllm-arc
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+      - render
+    ipc: host
+    shm_size: "16g"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+    restart: unless-stopped
+    command:
+      - --model
+      - Qwen/Qwen2.5-7B-Instruct
+      - --dtype
+      - bfloat16
+      - --max-model-len
+      - "8192"
