@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -5,100 +6,43 @@
 #
 #    http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ============================================================================
+# vLLM on Intel Arc GPUs (A-series and B-series) with an OpenAI-compatible API.
+# Uses Intel's pre-built vLLM XPU image which ships the correct PyTorch/IPEX
+# versions and pre-compiled SYCL kernels, avoiding pip version-conflict issues.
 
-ARG UBUNTU_VERSION=22.04
+ARG VLLM_TAG=0.14.1-xpu
+FROM intel/vllm:${VLLM_TAG}
 
-FROM ubuntu:${UBUNTU_VERSION} AS fastchat-xpu
+ENV DEBIAN_FRONTEND=noninteractive
 
+# Intel-documented runtime env vars for Arc GPUs.
+# SYCL_CACHE_PERSISTENT: avoids per-start JIT kernel recompilation (can take minutes on first run).
+# USE_XETLA=OFF: required for Arc A-series and Flex stability; harmless no-op on Xe2 (B-series).
+# SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS: perf win via legacy L0 adapter (A-series, oneAPI <2025.3).
+# UR_L0_USE_IMMEDIATE_COMMANDLISTS: equivalent for L0 V2 adapter (B-series / Xe2, oneAPI 2025.3+).
+# ZES_ENABLE_SYSMAN: enables accurate VRAM reporting across multiple GPUs.
+# UR_L0_ENABLE_RELAXED_ALLOCATION_LIMITS: required for single allocations >4 GiB (7B+ models in bf16/fp16).
+# VLLM_WORKER_MULTIPROC_METHOD=spawn: SYCL contexts are not fork-safe; prevents deadlocks on multi-GPU.
+ENV SYCL_CACHE_PERSISTENT=1
+ENV USE_XETLA=OFF
+ENV SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS=1
+ENV UR_L0_USE_IMMEDIATE_COMMANDLISTS=1
+ENV ZES_ENABLE_SYSMAN=1
+ENV UR_L0_ENABLE_RELAXED_ALLOCATION_LIMITS=1
+ENV VLLM_WORKER_MULTIPROC_METHOD=spawn
 
-ARG PYTHON=python3.10
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends --fix-missing \
-    ca-certificates \
-    gnupg2 \
-    gpg-agent \
-    unzip \
-    wget \
-    build-essential \
-    curl \
-    libgl1 \
-    libglib2.0-0 \
-    libgomp1 \
-    libjemalloc-dev \
-    git \
-    git-lfs \
-    curl \
-    opencl-headers \
-    clblast-utils \
-    numactl \
-    python3 libpython3.11 python3-pip python3-venv
-    
+ENV VLLM_HOST=0.0.0.0
+ENV VLLM_PORT=8000
+ENV HF_HOME=/root/.cache/huggingface
 
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-RUN python3 -m pip install --upgrade pip setuptools
-
-# Force 100% available VRAM size for compute-runtime
-# See https://github.com/intel/compute-runtime/issues/586
-ENV NEOReadDebugKeys=1
-ENV ClDeviceGlobalMemSizeAvailablePercent=100
-
-
-# oneAPI packages
-RUN no_proxy=$no_proxy wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
-   | gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null && \
-   echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
-   | tee /etc/apt/sources.list.d/oneAPI.list
-
-# Intel driver index
-RUN wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | \
-    gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg && \
-    echo "deb [arch=amd64,i386 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy client" \
-    | tee /etc/apt/sources.list.d/intel-gpu-jammy.list
-
-# Install Intel packages
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends --fix-missing \
-    intel-opencl-icd intel-level-zero-gpu level-zero \
-    level-zero-dev intel-oneapi-runtime-dpcpp-cpp intel-oneapi-runtime-mkl intel-oneapi-compiler-shared-common-2023.2.1 \
-    intel-media-va-driver-non-free libmfx1 libmfxgen1 libvpl2 \
-    libegl-mesa0 libegl1-mesa libegl1-mesa-dev libgbm1 libgl1-mesa-dev libgl1-mesa-dri \
-    libglapi-mesa libgles2-mesa-dev libglx-mesa0 libigdgmm12 libxatracker2 mesa-va-drivers \
-    mesa-vdpau-drivers mesa-vulkan-drivers va-driver-all vainfo hwinfo clinfo  && \
-    apt-get clean && \    
-    rm -rf  /var/lib/apt/lists/*
-
-
-ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so
-
-# Install Torch
-RUN pip install torch==2.0.1a0 torchvision==0.15.2a0 intel_extension_for_pytorch==2.0.110+xpu --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/
-
-# Install llama-cpp-python
-RUN CMAKE_ARGS="-DLLAMA_CLBLAST=on" FORCE_CMAKE=1 pip install llama-cpp-python  --force-reinstall --upgrade --no-cache-dir
-
-# Install fschat
-RUN pip install "fschat[model_worker,webui]"
-
-VOLUME [ "/deps" ]
-VOLUME [ "/logs" ]
-VOLUME [ "/root/.cache/huggingface" ]
-RUN mkdir /logs
-WORKDIR /logs
-
-EXPOSE 7860
+VOLUME ["/root/.cache/huggingface"]
 EXPOSE 8000
-ENV FS_ENABLE_WEB=true
-ENV FS_ENABLE_OPENAI_API=true
-ENV LOGDIR=/logs
 
-COPY startup.sh /bin/start_fastchat.sh
-RUN chmod 755 /bin/start_fastchat.sh
-ENTRYPOINT [ "/bin/bash", "/bin/start_fastchat.sh" ]
-CMD ["--model-path lmsys/vicuna-7b-v1.3 --max-gpu-memory 14Gib"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD curl -sf http://localhost:8000/health
+
+COPY startup.sh /usr/local/bin/startup.sh
+RUN chmod +x /usr/local/bin/startup.sh
+
+ENTRYPOINT ["/usr/local/bin/startup.sh"]
+CMD ["--model", "Qwen/Qwen3-4B", "--dtype", "bfloat16", "--max-model-len", "8192"]
