@@ -37,7 +37,7 @@ sudo usermod -aG render,video $USER   # log out and back in after this
 docker compose up -d
 ```
 
-This loads `Qwen/Qwen3-4B` in bfloat16 (float16 on A-series) with an 8K context on port 8000. Qwen3-4B fits comfortably on A770 16 GB (~8 GB weights, ~6 GB free for KV cache) and matches Qwen2.5-7B-Instruct quality. Override the model by editing `docker-compose.yaml` or by running:
+This loads `Qwen/Qwen3.5-4B` in bfloat16 (float16 on A-series) with an 8K context on port 8000. Qwen3.5-4B fits comfortably on A770 16 GB (~8 GB weights, ~6 GB free for KV cache). Override the model by editing `docker-compose.yaml` or by running:
 
 ```sh
 MODEL=meta-llama/Llama-3.1-8B-Instruct docker compose run --rm --service-ports vllm \
@@ -62,7 +62,7 @@ docker run -d \
     -e HF_TOKEN=${HF_TOKEN:-} \
     -p 8000:8000 \
     itlackey/ipex-arc-fastchat:latest \
-    --model Qwen/Qwen3-4B --dtype bfloat16 --max-model-len 8192
+    --model Qwen/Qwen3.5-4B --dtype bfloat16 --max-model-len 8192
 ```
 
 `--shm-size=16g` is required by vLLM's shared-memory IPC mechanism for multi-process workers. `--group-add video --group-add render` is required on most Linux distributions for the container to use `/dev/dri/renderD128`. For multi-GPU tensor-parallel setups, add `--ipc=host` to share the full host IPC namespace across GPU workers.
@@ -76,7 +76,7 @@ from openai import OpenAI
 client = OpenAI(base_url="http://localhost:8000/v1", api_key="EMPTY")
 
 resp = client.chat.completions.create(
-    model="Qwen/Qwen3-4B",
+    model="Qwen/Qwen3.5-4B",
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(resp.choices[0].message.content)
