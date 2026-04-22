@@ -25,7 +25,7 @@ services:
     restart: unless-stopped
     command:
       - --model
-      - Qwen/Qwen2.5-7B-Instruct
+      - Qwen/Qwen3-4B
       - --dtype
       - bfloat16
       - --max-model-len

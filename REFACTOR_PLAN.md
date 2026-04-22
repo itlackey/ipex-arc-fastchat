@@ -133,7 +133,7 @@ COPY startup.sh /usr/local/bin/startup.sh
 RUN chmod +x /usr/local/bin/startup.sh
 
 ENTRYPOINT ["/usr/local/bin/startup.sh"]
-CMD ["--model", "Qwen/Qwen2.5-7B-Instruct", "--dtype", "bfloat16"]
+CMD ["--model", "Qwen/Qwen3-4B", "--dtype", "bfloat16"]
 ```
 
 **What gets deleted:**
@@ -203,7 +203,7 @@ services:
     # Override `command` to change the model or vLLM flags
     command:
       - --model
-      - Qwen/Qwen2.5-7B-Instruct
+      - Qwen/Qwen3-4B
       - --dtype
       - bfloat16
       - --max-model-len
@@ -317,7 +317,7 @@ Recommend **keep the name for one release** to avoid breaking downstream users, 
 
 ### 6.2 Runtime verification — Arc A-series (A770 16GB)
 - [ ] Container starts, `sycl-ls` shows the GPU
-- [ ] Load `Qwen/Qwen2.5-7B-Instruct` in bf16
+- [ ] Load `Qwen/Qwen3-4B` in bf16
 - [ ] `curl http://localhost:8000/v1/models` returns the model
 - [ ] `curl http://localhost:8000/v1/chat/completions` returns a valid response
 - [ ] Throughput benchmark vs current FastChat: expect ≥2× on concurrent requests (PagedAttention + continuous batching)
