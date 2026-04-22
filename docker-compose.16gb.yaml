@@ -1,0 +1,11 @@
+services:
+  vllm:
+    command:
+      - --model
+      - Qwen/Qwen3.5-9B
+      - --dtype
+      - float16
+      - --max-model-len
+      - "4096"
+      - --gpu-memory-utilization
+      - "0.95"
