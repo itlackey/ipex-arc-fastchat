@@ -1,0 +1,12 @@
+services:
+  vllm:
+    ipc: host
+    command:
+      - --model
+      - Qwen/Qwen3.6-35B-A3B
+      - --dtype
+      - bfloat16
+      - --max-model-len
+      - "8192"
+      - --tensor-parallel-size
+      - "2"

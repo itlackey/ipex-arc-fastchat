@@ -45,4 +45,4 @@ COPY startup.sh /usr/local/bin/startup.sh
 RUN chmod +x /usr/local/bin/startup.sh
 
 ENTRYPOINT ["/usr/local/bin/startup.sh"]
-CMD ["--model", "Qwen/Qwen3-4B", "--dtype", "bfloat16", "--max-model-len", "8192"]
+CMD ["--model", "Qwen/Qwen3.5-4B", "--dtype", "bfloat16", "--max-model-len", "8192"]

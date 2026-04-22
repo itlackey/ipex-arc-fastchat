@@ -37,7 +37,7 @@ sudo usermod -aG render,video $USER   # log out and back in after this
 docker compose up -d
 ```
 
-This loads `Qwen/Qwen3-4B` in bfloat16 (float16 on A-series) with an 8K context on port 8000. Qwen3-4B fits comfortably on A770 16 GB (~8 GB weights, ~6 GB free for KV cache) and matches Qwen2.5-7B-Instruct quality. Override the model by editing `docker-compose.yaml` or by running:
+This loads `Qwen/Qwen3.5-4B` in bfloat16 (float16 on A-series) with an 8K context on port 8000. Qwen3.5-4B fits comfortably on A770 16 GB (~8 GB weights, ~6 GB free for KV cache). Override the model by editing `docker-compose.yaml` or by running:
 
 ```sh
 MODEL=meta-llama/Llama-3.1-8B-Instruct docker compose run --rm --service-ports vllm \
@@ -62,7 +62,7 @@ docker run -d \
     -e HF_TOKEN=${HF_TOKEN:-} \
     -p 8000:8000 \
     itlackey/ipex-arc-fastchat:latest \
-    --model Qwen/Qwen3-4B --dtype bfloat16 --max-model-len 8192
+    --model Qwen/Qwen3.5-4B --dtype bfloat16 --max-model-len 8192
 ```
 
 `--shm-size=16g` is required by vLLM's shared-memory IPC mechanism for multi-process workers. `--group-add video --group-add render` is required on most Linux distributions for the container to use `/dev/dri/renderD128`. For multi-GPU tensor-parallel setups, add `--ipc=host` to share the full host IPC namespace across GPU workers.
@@ -76,7 +76,7 @@ from openai import OpenAI
 client = OpenAI(base_url="http://localhost:8000/v1", api_key="EMPTY")
 
 resp = client.chat.completions.create(
-    model="Qwen/Qwen3-4B",
+    model="Qwen/Qwen3.5-4B",
     messages=[{"role": "user", "content": "Hello!"}],
 )
 print(resp.choices[0].message.content)
@@ -88,20 +88,72 @@ Other useful endpoints:
 - `POST /v1/embeddings` — if the loaded model supports embeddings
 - `GET /metrics` — Prometheus metrics (tokens/sec, queue depth, KV cache usage, etc.)
 
-## GPU memory sizing
+## GPU profiles
 
-| GPU | VRAM | Recommended model sizes |
-|---|---|---|
-| Arc A750 | 8 GB | 7B with INT4 quantization (see Quantization note) |
-| Arc A770 *(16 GB SKU)* | 16 GB | 7B fp16, or 13B INT4 |
-| Arc A770 *(8 GB SKU)* | 8 GB | 7B INT4 only |
-| Arc B580 | 12 GB | 7B bf16 (shorter context), 13B INT4 |
-| Arc Pro B60 | 24 GB | 13B bf16, 32B INT4 |
-| Arc Pro B70 | 32 GB | 32B bf16, 70B INT4 |
+Three Docker Compose override files are provided for common GPU tiers. Merge one with the base file using `-f`:
+
+### 16 GB (Arc A770 16 GB)
+
+```sh
+docker compose -f docker-compose.yaml -f docker-compose.16gb.yaml up -d
+```
+
+Uses `Qwen/Qwen3.5-9B` with a 4K context. **Qwen3.5-9B at float16 is ~18 GB — larger than 16 GB VRAM, so weight quantization is required.** Choose one of:
+
+- **GPTQ INT4** (pre-quantized model, vLLM non-Marlin path):
+  ```sh
+  # replace the --model value with a GPTQ-Int4 variant from HuggingFace, e.g.
+  # Qwen/Qwen3.5-9B-Instruct-GPTQ-Int4 (if published by the Qwen team)
+  # then add: --quantization gptq
+  ```
+- **Intel Neural Compressor INT8** (dynamic, no separate checkpoint needed):
+  ```sh
+  # add to the command in docker-compose.16gb.yaml:
+  # - --quantization
+  # - inc
+  ```
+
+Either option reduces weight memory to ~4.5 GB (INT4) or ~9 GB (INT8), fitting comfortably on a 16 GB card.
+
+### 24 GB (Arc Pro B60 or equivalent)
+
+```sh
+docker compose -f docker-compose.yaml -f docker-compose.24gb.yaml up -d
+```
+
+Uses `Qwen/Qwen3.5-9B` in bfloat16 with an 8K context. At ~18 GB for weights, this leaves ~6 GB for KV cache — enough for typical workloads without quantization.
+
+### 32 GB (2× Arc A770 or Arc Pro B70)
+
+```sh
+docker compose -f docker-compose.yaml -f docker-compose.32gb.yaml up -d
+```
+
+Uses `Qwen/Qwen3.6-35B-A3B` (35B MoE, 3B active per token) sharded across 2 GPUs with `--tensor-parallel-size 2`. The full model at bfloat16 is ~70 GB — **weight quantization is required**:
+
+- With 2× A770 (32 GB total): INT4 shards the ~17.5 GB quantized model across both cards, leaving ample room for KV cache.
+- On a single 32 GB GPU (Arc Pro B70): use INT4 and remove `--tensor-parallel-size 2` from `docker-compose.32gb.yaml`.
+
+Add to the 32gb override command as appropriate:
+```
+- --quantization
+- gptq
+```
 
 > **A-series note:** `--dtype bfloat16` silently falls back to `float16` on Alchemist (A-series) GPUs — this is expected vLLM behavior. Both precisions use the same VRAM; only the log output differs. Use `--dtype float16` explicitly on A-series to avoid the warning.
 >
 > **Quantization note:** `awq_marlin` and `gptq_marlin` rely on CUDA-specific Marlin kernels and are **not supported on Intel XPU**. For KV-cache compression, use `--kv-cache-dtype fp8` (verified XPU support in 0.14.x). Check the [vLLM XPU quantization docs](https://docs.vllm.ai/en/stable/features/quantization/) for currently supported weight quantization formats on XPU.
+
+## GPU memory sizing
+
+| GPU | VRAM | Default profile | Notes |
+|---|---|---|---|
+| Arc A770 *(8 GB SKU)* | 8 GB | `docker-compose.yaml` (4B) | 4B fits; 9B needs heavy INT4 quant |
+| Arc A750 / B580 | 8–12 GB | `docker-compose.yaml` (4B) | 4B fits; 9B needs INT4 quant |
+| Arc A770 *(16 GB SKU)* | 16 GB | `docker-compose.16gb.yaml` | 9B needs INT4/INT8 quantization |
+| Arc Pro B60 | 24 GB | `docker-compose.24gb.yaml` | 9B fits at bfloat16 |
+| Arc Pro B70 | 32 GB | `docker-compose.32gb.yaml` | 35B MoE needs INT4, single GPU |
+| 2× Arc A770 | 32 GB | `docker-compose.32gb.yaml` | 35B MoE INT4 with `--tensor-parallel-size 2` |
 
 Key vLLM flags for tuning:
 - `--gpu-memory-utilization 0.9` — fraction of VRAM vLLM may use (default 0.9)
@@ -124,8 +176,9 @@ docker run -d \
     -v ~/.cache/huggingface:/root/.cache/huggingface \
     -p 8000:8000 \
     itlackey/ipex-arc-fastchat:latest \
-    --model Qwen/Qwen3-32B \
+    --model Qwen/Qwen3.6-35B-A3B \
     --dtype bfloat16 \
+    --quantization gptq \
     --tensor-parallel-size 2
 ```
 
