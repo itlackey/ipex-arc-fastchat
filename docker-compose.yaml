@@ -7,9 +7,8 @@ services:
     devices:
       - /dev/dri:/dev/dri
     group_add:
-      - video
-      - render
-    ipc: host
+      - "${RENDER_GID:-109}"   # run: stat -c '%g' /dev/dri/renderD128
+      - "${VIDEO_GID:-44}"     # run: getent group video | cut -d: -f3
     shm_size: "16g"
     ports:
       - "8000:8000"
@@ -17,6 +16,12 @@ services:
       - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
     restart: unless-stopped
     command:
       - --model

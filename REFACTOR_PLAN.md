@@ -1,6 +1,6 @@
 # Refactor Plan: Migrate to vLLM-XPU
 
-**Status:** Proposed
+**Status:** Implemented
 **Branch:** `claude/intel-arc-gpu-research-uf7CR`
 **Target:** Replace the FastChat + IPEX 2.0.110 + CLBlast stack with a modern vLLM-XPU stack that supports both Intel Arc A-series and B-series GPUs with an OpenAI-compatible API.
 
@@ -17,7 +17,7 @@ After reviewing the current Intel Arc GPU LLM landscape, **vLLM with the native 
 | OpenAI-compatible API | Built-in | Separate process | Built-in | Separate process |
 | PagedAttention / continuous batching | Yes | No | No | No |
 | FP8 KV cache | Yes | No | No | No |
-| INT4/INT8/FP8/AWQ/GPTQ quantization | Yes | No | INT4 only | GGUF only |
+| FP8 KV-cache; XPU-verified quantization (AWQ/GPTQ Marlin are CUDA-only) | Yes | No | INT4 only | GGUF only |
 | Multi-GPU tensor parallelism | Yes | Limited | No | Limited |
 | Active upstream maintenance | Yes (Intel + vLLM community) | Archived (Jan 2026) | Archived (Jan 2026) | Yes |
 | Single-process architecture | Yes | No (3 processes) | Yes | Yes |
@@ -81,17 +81,16 @@ vLLM-XPU covers both GPU families, has the richest OpenAI API surface, and is th
 
 ## 3. Base Image Selection
 
-Use **`intel/intel-extension-for-pytorch:2.8.10-xpu`** as the Dockerfile base. Rationale:
+Use **`intel/vllm:0.14.1-xpu`** (Intel AI Containers) as the Dockerfile base. Rationale:
 
-- Ships with the correct Intel GPU driver stack (Level Zero, OpenCL ICD, Media drivers)
-- Ships with oneAPI 2025.x runtime, pre-configured
-- Ships with PyTorch 2.8.0 + XPU already working
-- Maintained by Intel; receives security patches
+- Ships vLLM pre-built with the correct PyTorch 2.9 + IPEX 2.9.10 XPU versions and pre-compiled SYCL kernels
+- Avoids the `vllm[xpu]` pip-install approach, which silently installs the base CPU package (no `xpu` extra exists on PyPI; XPU builds are source-only or prebuilt images)
+- Includes the correct Intel GPU driver stack (Level Zero, OpenCL ICD) and oneAPI runtimes
+- Receives security patches from Intel; `0.14.1` patches CVE-2026-22778 (CVSS 9.8 RCE, present in 0.14.0)
 - Avoids ~200 lines of apt sources and GPU driver bootstrap
+- Pin is transparent: `ARG VLLM_TAG=0.14.1-xpu` in the Dockerfile makes the version explicit and overridable at build time
 
-vLLM is `pip install`-ed on top. This drops the Dockerfile from ~105 lines to ~25.
-
-(Alternative considered: `opea/vllm-arc:latest` — already has vLLM pre-installed but pins vLLM version opaquely and is a less transparent base for a project people fork.)
+Note: `intel-extension-for-pytorch` active development was discontinued after v2.8 (March 2026 EOL for maintenance patches). This base image represents the last IPEX-based vLLM generation; vLLM ≥ 0.16.0 replaces IPEX with `vllm-xpu-kernels`. Update the `VLLM_TAG` build arg when upgrading past 0.15.x.
 
 ---
 
@@ -325,7 +324,7 @@ Recommend **keep the name for one release** to avoid breaking downstream users, 
 
 ### 6.3 Runtime verification — Arc B-series (B580 12GB)
 - [ ] Same 7B model loads (may need `--max-model-len 4096` for context)
-- [ ] INT4 quantization (`--quantization awq_marlin`) enables 13B loading
+- [ ] `--kv-cache-dtype fp8` reduces KV cache memory (XPU-verified; `awq_marlin`/`gptq_marlin` are CUDA-only)
 - [ ] No driver-level errors in `dmesg`
 
 ### 6.4 Multi-GPU (optional, if hardware available)
@@ -349,10 +348,17 @@ Recommend **keep the name for one release** to avoid breaking downstream users, 
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| vLLM 0.14.0 XPU backend has regression vs FastChat on A-series | Medium | High | Pin `VLLM_VERSION` as build arg; test A770 explicitly before release |
-| Base image `intel/intel-extension-for-pytorch:2.8.10-xpu` gets yanked / renamed | Low | Medium | Digest-pin in Dockerfile (`FROM intel/...@sha256:...`) once a known-good digest is validated |
+| **CVE-2026-22778 (CVSS 9.8)** — RCE in vLLM ≤ 0.14.0 via malicious video URL | High (public exploit) | Critical | Base image `intel/vllm:0.14.1-xpu` includes the patch; do not use `0.14.0-xpu` |
+| vLLM XPU backend regression on A-series (Alchemist / Xe) | Medium | High | A-series support has been intermittent since vLLM 0.10.0; test A770 explicitly; check issue tracker before release |
+| `--host 0.0.0.0` with no API key exposes inference endpoint to local network | High | High | Add `--api-key` flag or reverse proxy; README Security section documents this |
+| Container runs as root; combined with `ipc: host` escalates container escape impact | Medium | High | Document and flag for post-1.0 hardening; drop `ipc: host` for single-GPU setups |
+| `awq_marlin` / `gptq_marlin` advertised but CUDA-only | High | Medium | README and plan corrected to document XPU quantization limitations |
+| B-series requires kernel 6.12+; users on Ubuntu 22.04 / kernel 6.x will fail | Medium | Medium | README updated with per-series kernel requirements |
+| Base image `intel/vllm:0.14.1-xpu` tag is mutable | Low | Medium | Digest-pin the FROM line once a known-good digest is validated; use Renovate/Dependabot |
+| IPEX entering EOL (maintenance-only through ~mid-2026, then unsupported) | Medium | Medium | vLLM ≥ 0.16.0 replaces IPEX with `vllm-xpu-kernels`; plan a VLLM_TAG bump to track upstream |
+| HF_TOKEN exposed via `docker inspect` | Medium | Medium | Use `.env` file (gitignored); document in README Security section; never `ENV HF_TOKEN` in Dockerfile |
 | Users rely on Gradio UI at port 7860 | Medium | Low | Document Open WebUI compose addition; call out in release notes |
-| Users rely on `--max-gpu-memory` FastChat flag | High | Low | README migration table: `--max-gpu-memory 14Gib` → `--gpu-memory-utilization 0.9` |
+| Users rely on `--max-gpu-memory` FastChat flag | High | Low | README migration note: `--max-gpu-memory 14Gib` → `--gpu-memory-utilization 0.9` |
 | `llama-cpp-python` GGUF workflow removed | Medium | Medium | vLLM supports GGUF loading from v0.6+; document `--model path/to/file.gguf` |
 | IPEX `2.0.110+xpu` wheel index URL removal breaks rebuilds of old tag | Low | Low | Pre-build and tag `v0.0.6-legacy` before any change; keep it on Docker Hub indefinitely |
 
