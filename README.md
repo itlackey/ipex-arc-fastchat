@@ -1,5 +1,9 @@
 # FastChat Docker for Intel Arc GPUs
- 
+
+> **Notice: This project is moving away from FastChat.**
+>
+> We are in the process of migrating this project off of [FastChat](https://github.com/lm-sys/FastChat) in favor of a more actively maintained serving stack for Intel Arc GPUs. The existing FastChat-based image and instructions below will continue to work for now, but new development, features, and bug fixes will target the replacement runtime. Expect the image name, CLI arguments, and default endpoints to change in a future release. Watch this repository for migration notes and upgrade guidance.
+
 This project provides a Docker container that can be used to host a [FastChat](https://github.com/lm-sys/FastChat) web server and OpenAI API. This project is based heavily on the work done by [Nuullll](https://github.com/Nuullll) and their [ipex-sd-docker-for-arc-gpu](https://github.com/Nuullll/ipex-sd-docker-for-arc-gpu) project. Thank you to them for doing the heavy lifting of getting the Arc GPU working in a docker container.
 
 ## Running the container
